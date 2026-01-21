@@ -1,0 +1,14 @@
+# Binaries
+feedme-scraper
+*.exe
+
+# Environment
+.env
+.env.local
+
+# Cache
+.cache/
+
+# IDE
+.idea/
+.vscode/

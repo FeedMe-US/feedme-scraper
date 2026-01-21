@@ -1,0 +1,63 @@
+name: Menu Scraper
+
+on:
+  schedule:
+    # 5 AM and 5 PM PST
+    - cron: '0 13 * * *'
+    - cron: '0 1 * * *'
+
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (no database writes)'
+        required: false
+        default: false
+        type: boolean
+      days:
+        description: 'Number of days to scrape'
+        required: false
+        default: '7'
+        type: string
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: go.sum
+
+      - name: Build scraper
+        run: go build -o feedme-scraper .
+
+      - name: Run scraper
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          DAYS="${{ github.event.inputs.days || '7' }}"
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            ./feedme-scraper run --dry-run --verbose --days "$DAYS"
+          else
+            ./feedme-scraper run --verbose --days "$DAYS"
+          fi
+
+      # Trigger embedding generation via API endpoint
+      - name: Trigger embedding generation
+        if: success() && github.event.inputs.dry_run != 'true'
+        env:
+          API_URL: ${{ secrets.API_URL }}
+          API_ADMIN_KEY: ${{ secrets.API_ADMIN_KEY }}
+        run: |
+          echo "Triggering embedding generation..."
+          curl -X POST "$API_URL/admin/generate-embeddings" \
+            -H "X-Admin-Key: $API_ADMIN_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"batch_size": 100}' \
+            --fail --silent --show-error
+          echo "Embedding generation triggered"
