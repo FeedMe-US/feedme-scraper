@@ -10,6 +10,7 @@ import (
 
 	"github.com/FeedMe-US/feedme-scraper/internal/db"
 	"github.com/FeedMe-US/feedme-scraper/internal/fetch"
+	"github.com/FeedMe-US/feedme-scraper/internal/metrics"
 	"github.com/FeedMe-US/feedme-scraper/internal/models"
 	"github.com/FeedMe-US/feedme-scraper/internal/parse"
 )
@@ -21,6 +22,7 @@ type Scraper struct {
 	logger     *slog.Logger
 	maxWorkers int
 	dryRun     bool
+	Metrics    *metrics.Collector
 }
 
 // Options configures the scraper.
@@ -46,6 +48,7 @@ func New(opts Options) *Scraper {
 		logger:     opts.Logger,
 		maxWorkers: opts.MaxWorkers,
 		dryRun:     opts.DryRun,
+		Metrics:    metrics.New(),
 	}
 }
 
@@ -240,6 +243,8 @@ func (s *Scraper) fetchAllHalls(ctx context.Context, date time.Time) ([]models.M
 			sem <- struct{}{}        // Acquire
 			defer func() { <-sem }() // Release
 
+			hallStart := time.Now()
+
 			// Append date parameter to URL to fetch specific day's menu
 			url := loc.URL + "?date=" + dateStr
 			s.logger.Debug("Fetching", "location", loc.Name, "date", dateStr)
@@ -250,6 +255,7 @@ func (s *Scraper) fetchAllHalls(ctx context.Context, date time.Time) ([]models.M
 				allErrors = append(allErrors, fmt.Sprintf("%s: %v", loc.Name, err))
 				mu.Unlock()
 				s.logger.Warn("Failed to fetch", "location", loc.Name, "error", err)
+				s.Metrics.RecordHall(loc.Name, 0, time.Since(hallStart), err)
 				return
 			}
 
@@ -264,12 +270,16 @@ func (s *Scraper) fetchAllHalls(ctx context.Context, date time.Time) ([]models.M
 				allErrors = append(allErrors, fmt.Sprintf("%s parse: %v", loc.Name, err))
 				mu.Unlock()
 				s.logger.Warn("Failed to parse", "location", loc.Name, "error", err)
+				s.Metrics.RecordHall(loc.Name, 0, time.Since(hallStart), err)
 				return
 			}
 
 			mu.Lock()
 			allItems = append(allItems, items...)
 			mu.Unlock()
+
+			// Record successful hall scrape
+			s.Metrics.RecordHall(loc.Name, len(items), time.Since(hallStart), nil)
 
 			s.logger.Info("Fetched hall",
 				"location", loc.Name,

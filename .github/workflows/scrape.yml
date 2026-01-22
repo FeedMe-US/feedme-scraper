@@ -39,12 +39,15 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          GRAFANA_METRICS_URL: ${{ secrets.GRAFANA_METRICS_URL }}
+          GRAFANA_METRICS_USER: ${{ secrets.GRAFANA_METRICS_USER }}
+          GRAFANA_METRICS_API_KEY: ${{ secrets.GRAFANA_METRICS_API_KEY }}
         run: |
           DAYS="${{ github.event.inputs.days || '7' }}"
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
             ./feedme-scraper run --dry-run --verbose --days "$DAYS"
           else
-            ./feedme-scraper run --verbose --days "$DAYS"
+            ./feedme-scraper run --verbose --days "$DAYS" --push-metrics
           fi
 
       # Trigger embedding generation via API endpoint

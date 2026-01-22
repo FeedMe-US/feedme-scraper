@@ -16,13 +16,15 @@ import (
 )
 
 var (
-	dateStr    string
-	location   string
-	dryRun     bool
-	cacheDir   string
-	rateLimit  float64
-	maxWorkers int
-	days       int // Number of days to scrape (1 = today only, 7 = week ahead)
+	dateStr       string
+	location      string
+	dryRun        bool
+	cacheDir      string
+	rateLimit     float64
+	maxWorkers    int
+	days          int    // Number of days to scrape (1 = today only, 7 = week ahead)
+	metricsOutput string // File path to write Prometheus metrics
+	pushMetrics   bool   // Push metrics to Grafana Cloud
 )
 
 var runCmd = &cobra.Command{
@@ -47,6 +49,8 @@ func init() {
 	runCmd.Flags().StringVar(&cacheDir, "cache-dir", ".cache", "Cache directory")
 	runCmd.Flags().Float64Var(&rateLimit, "rate-limit", 1.0, "Requests per second")
 	runCmd.Flags().IntVar(&maxWorkers, "workers", 10, "Max concurrent workers")
+	runCmd.Flags().StringVar(&metricsOutput, "metrics-output", "", "File path to write Prometheus metrics (optional)")
+	runCmd.Flags().BoolVar(&pushMetrics, "push-metrics", false, "Push metrics to Grafana Cloud (requires GRAFANA_METRICS_* env vars)")
 }
 
 func runScraper() error {
@@ -203,6 +207,43 @@ func runScraper() error {
 		fmt.Printf("\nErrors (%d):\n", len(allErrors))
 		for _, e := range allErrors {
 			fmt.Printf("  - %s\n", e)
+		}
+	}
+
+	// Finalize metrics
+	// Calculate items missing nutrition (items without recipe_id can't have nutrition)
+	itemsMissingNutrition := 0
+	if totalItems > totalNutrition {
+		itemsMissingNutrition = totalItems - totalNutrition
+	}
+
+	s.Metrics.SetTotals(totalItems, totalNutrition, itemsMissingNutrition, len(allErrors), days)
+	s.Metrics.Finish(!anyFailed)
+
+	// Output metrics to file if requested
+	if metricsOutput != "" {
+		metricsData := s.Metrics.ToPrometheus()
+		if err := os.WriteFile(metricsOutput, []byte(metricsData), 0644); err != nil {
+			logger.Error("Failed to write metrics file", "error", err)
+		} else {
+			logger.Info("Metrics written", "file", metricsOutput)
+		}
+	}
+
+	// Push metrics to Grafana Cloud if requested
+	if pushMetrics {
+		grafanaURL := os.Getenv("GRAFANA_METRICS_URL")
+		grafanaUser := os.Getenv("GRAFANA_METRICS_USER")
+		grafanaKey := os.Getenv("GRAFANA_METRICS_API_KEY")
+
+		if grafanaURL == "" || grafanaUser == "" || grafanaKey == "" {
+			logger.Warn("GRAFANA_METRICS_* env vars not set, skipping metrics push")
+		} else {
+			if err := s.Metrics.Push(grafanaURL, grafanaUser, grafanaKey); err != nil {
+				logger.Error("Failed to push metrics to Grafana", "error", err)
+			} else {
+				logger.Info("Metrics pushed to Grafana Cloud")
+			}
 		}
 	}
 
