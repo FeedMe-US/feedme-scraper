@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jackwlutz/feedme/scraper/internal/models"
+	"github.com/FeedMe-US/feedme-scraper/internal/models"
 )
 
 // DB is a Supabase REST client.

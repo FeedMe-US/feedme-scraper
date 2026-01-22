@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/jackwlutz/feedme/scraper/internal/models"
+	"github.com/FeedMe-US/feedme-scraper/internal/models"
 )
 
 // numericRegex extracts numeric values from strings like "3.7g" or "15"

@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackwlutz/feedme/scraper/internal/db"
-	"github.com/jackwlutz/feedme/scraper/internal/fetch"
-	"github.com/jackwlutz/feedme/scraper/internal/models"
-	"github.com/jackwlutz/feedme/scraper/internal/parse"
+	"github.com/FeedMe-US/feedme-scraper/internal/db"
+	"github.com/FeedMe-US/feedme-scraper/internal/fetch"
+	"github.com/FeedMe-US/feedme-scraper/internal/models"
+	"github.com/FeedMe-US/feedme-scraper/internal/parse"
 )
 
 // Scraper orchestrates the menu scraping process.

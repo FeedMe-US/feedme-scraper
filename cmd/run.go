@@ -9,10 +9,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jackwlutz/feedme/scraper/internal/db"
-	"github.com/jackwlutz/feedme/scraper/internal/fetch"
-	"github.com/jackwlutz/feedme/scraper/internal/models"
-	"github.com/jackwlutz/feedme/scraper/internal/scraper"
+	"github.com/FeedMe-US/feedme-scraper/internal/db"
+	"github.com/FeedMe-US/feedme-scraper/internal/fetch"
+	"github.com/FeedMe-US/feedme-scraper/internal/models"
+	"github.com/FeedMe-US/feedme-scraper/internal/scraper"
 )
 
 var (

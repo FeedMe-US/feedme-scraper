@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/jackwlutz/feedme/scraper/internal/models"
+	"github.com/FeedMe-US/feedme-scraper/internal/models"
 )
 
 // timeRegex matches times like "7am", "7:30am", "10pm", "10:30pm", "7:00 a.m.", "10:00 p.m."

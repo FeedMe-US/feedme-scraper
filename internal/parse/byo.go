@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/jackwlutz/feedme/scraper/internal/models"
+	"github.com/FeedMe-US/feedme-scraper/internal/models"
 )
 
 // BYO item name patterns - these items have customizable components

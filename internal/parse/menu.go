@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/jackwlutz/feedme/scraper/internal/models"
+	"github.com/FeedMe-US/feedme-scraper/internal/models"
 )
 
 // recipeIDRegex extracts recipe ID from URLs like /menu-item/?recipe=1234
