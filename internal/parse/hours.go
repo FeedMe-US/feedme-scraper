@@ -170,11 +170,11 @@ func ParseHours(html string, date time.Time) ([]models.LocationHours, error) {
 }
 
 // knownLocationPatterns lists substrings that identify known dining locations
+// NOTE: Bruin Bowl removed - limited hours make it unreliable for meal planning
 var knownLocationPatterns = []string{
 	"de neve", "deneve",
 	"bruin plate",
 	"epicuria", "covel",
-	"bruin bowl",
 	"bruin cafe", "bruin café",
 	"cafe 1919", "café 1919",
 	"feast", "rieber", "spice kitchen",
