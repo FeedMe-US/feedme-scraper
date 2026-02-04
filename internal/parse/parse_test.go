@@ -205,7 +205,9 @@ func TestIsKnownLocation(t *testing.T) {
 		{"Bruin Plate", true},
 		{"Epicuria at Covel", true},
 		{"epicuria", true},
-		{"Bruin Bowl", true},
+		// NOTE: Bruin Bowl intentionally removed from known locations
+		// (limited hours make it unreliable for meal planning)
+		{"Bruin Bowl", false},
 		{"Bruin Cafe", true},
 		{"Bruin Café", true},
 		{"Cafe 1919", true},
