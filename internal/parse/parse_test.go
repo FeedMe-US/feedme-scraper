@@ -4,6 +4,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/FeedMe-US/feedme-scraper/internal/models"
 )
 
 func TestParseHallMenu(t *testing.T) {
@@ -436,6 +438,103 @@ func TestNormalizeCategory(t *testing.T) {
 				t.Errorf("normalizeCategory(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCategorizeByIngredientName(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		// Base items
+		{"Flour Tortilla", "base"},
+		{"Whole Wheat Wrap", "base"},
+		{"Penne Pasta", "base"},
+		{"Sourdough Bread", "base"},
+		{"Soft Shell", "base"},
+
+		// Protein items
+		{"Grilled Chicken", "protein"},
+		{"Carne Asada Steak", "protein"},
+		{"Carnitas", "protein"},
+		{"Scrambled Eggs", "protein"},
+		{"Crispy Bacon", "protein"},
+		{"Grilled Salmon", "protein"},
+		{"Firm Tofu", "protein"},
+		{"Turkey Sausage", "protein"},
+
+		// Filling items
+		{"Cilantro Lime Rice", "filling"},
+		{"Black Beans", "filling"},
+		{"Refried Beans", "filling"},
+		{"Farro Grain", "filling"},
+
+		// Topping items
+		{"Shredded Lettuce", "topping"},
+		{"Diced Tomatoes", "topping"},
+		{"Shredded Cheddar Cheese", "topping"},
+		{"Fresh Cilantro", "topping"},
+		{"Sliced Jalapenos", "topping"},
+		{"Sauteed Mushrooms", "topping"},
+		{"Fresh Avocado", "topping"},
+
+		// Sauce items
+		{"Sour Cream", "sauce"},
+		{"Fresh Salsa", "sauce"},
+		{"Chipotle Mayo", "sauce"},
+		{"Ranch Dressing", "sauce"},
+		{"Guacamole", "sauce"},
+		{"Balsamic Vinaigrette", "sauce"},
+
+		// Extras (uncategorized items)
+		{"Special Seasoning", "extras"},
+		{"Lime Wedge", "extras"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := categorizeByIngredientName(tt.name); got != tt.want {
+				t.Errorf("categorizeByIngredientName(%q) = %q, want %q", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCategorizeComponentsByName(t *testing.T) {
+	// Test that components with "component" category get recategorized
+	components := []models.RecipeComponent{
+		{ComponentRecipeID: "1", Category: "component"},
+		{ComponentRecipeID: "2", Category: "component"},
+		{ComponentRecipeID: "3", Category: "component"},
+	}
+
+	// Mock name resolver
+	names := map[string]string{
+		"1": "Flour Tortilla",
+		"2": "Grilled Chicken",
+		"3": "Sour Cream",
+	}
+
+	result := CategorizeComponentsByName(components, func(id string) string {
+		return names[id]
+	})
+
+	expected := []string{"base", "protein", "sauce"}
+	for i, c := range result {
+		if c.Category != expected[i] {
+			t.Errorf("Component %d category = %q, want %q", i, c.Category, expected[i])
+		}
+	}
+
+	// Verify constraints were applied
+	if result[0].MinSelections != 1 {
+		t.Errorf("Base min_selections = %d, want 1", result[0].MinSelections)
+	}
+	if result[1].MinSelections != 1 {
+		t.Errorf("Protein min_selections = %d, want 1", result[1].MinSelections)
+	}
+	if result[2].MinSelections != 0 {
+		t.Errorf("Sauce min_selections = %d, want 0", result[2].MinSelections)
 	}
 }
 

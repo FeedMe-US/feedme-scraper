@@ -66,6 +66,19 @@ func ParseBYODetailPage(html, parentRecipeID string) ([]models.RecipeComponent, 
 	var components []models.RecipeComponent
 	categoryOrder := 0
 
+	// Build a map of recipe IDs to names from the page for name-based categorization
+	componentNames := make(map[string]string)
+	doc.Find("a[href*='recipe=']").Each(func(i int, link *goquery.Selection) {
+		href, _ := link.Attr("href")
+		recipeID := extractRecipeID(href)
+		if recipeID != "" && recipeID != parentRecipeID {
+			name := strings.TrimSpace(link.Text())
+			if name != "" {
+				componentNames[recipeID] = name
+			}
+		}
+	})
+
 	// UCLA BYO pages typically have component sections with headers and recipe links
 	// Structure varies but generally follows:
 	// - Category headers (e.g., "Tortilla", "Protein Options", "Toppings")
@@ -118,6 +131,28 @@ func ParseBYODetailPage(html, parentRecipeID string) ([]models.RecipeComponent, 
 	// Strategy 3: Parse from structured sections with h3/h4 headers
 	if len(components) == 0 {
 		components = parseBYOFromHeaderSections(doc, parentRecipeID)
+	}
+
+	// Strategy 4 (Fallback): Apply name-based categorization for any components
+	// that still have generic "component" category
+	if len(components) > 0 {
+		hasGenericCategories := false
+		for _, c := range components {
+			if c.Category == "component" || c.Category == "" {
+				hasGenericCategories = true
+				break
+			}
+		}
+
+		if hasGenericCategories {
+			// Apply name-based categorization using names extracted from the page
+			components = CategorizeComponentsByName(components, func(recipeID string) string {
+				return componentNames[recipeID]
+			})
+		}
+
+		// Apply constraints to all components
+		components = ApplyCategoryConstraints(components)
 	}
 
 	return components, nil
@@ -398,4 +433,142 @@ func extractComponentRecipeID(href string) string {
 		return matches[1]
 	}
 	return ""
+}
+
+// ============================================================================
+// NAME-BASED CATEGORIZATION (Fallback when HTML parsing doesn't yield categories)
+// ============================================================================
+
+// ingredientPatterns maps ingredient name patterns to categories
+// Used as fallback when UCLA's HTML doesn't have recognizable category headers
+var ingredientPatterns = map[string][]string{
+	"base": {
+		"tortilla", "bread", "croissant", "shell", "wrap", "bagel",
+		"penne", "rigatoni", "ziti", "rotini", "cavatappi", "farfalle",
+		"noodle", "pasta", "pizza dough", "bun", "roll", "pita", "flatbread",
+	},
+	"protein": {
+		"steak", "chicken", "pork", "beef", "turkey", "carnitas",
+		"shrimp", "salmon", "fish", "tofu", "lentil", "impossible",
+		"meat", "fajita", "egg", "bacon", "sausage", "ham", "prosciutto",
+		"chorizo", "pepperoni", "roast beef", "tempeh", "just egg",
+		"meatball", "pulled", "grilled", "fried chicken", "ground",
+	},
+	"filling": {
+		"rice", "bean", "refried", "garbanzo", "farro", "quinoa",
+		"black bean", "pinto", "chickpea",
+	},
+	"topping": {
+		"lettuce", "tomato", "onion", "corn", "pepper", "olive",
+		"vegetable", "cilantro", "jalapeno", "mushroom", "spinach",
+		"avocado", "cucumber", "radish", "arugula", "greens", "carrot",
+		"kale", "beet", "squash", "zucchini", "artichoke", "brussel",
+		"parmesan", "mozzarella", "cheddar", "feta", "provolone",
+		"goat cheese", "blue cheese", "crouton", "walnut", "almond",
+		"pickle", "caper", "cranberry", "pineapple", "basil",
+		"romaine", "cabbage", "slaw", "sprout",
+	},
+	"sauce": {
+		"sauce", "salsa", "cream", "crema", "guacamole", "dressing",
+		"pico", "chipotle", "ranch", "mayo", "mustard", "vinaigrette",
+		"pesto", "glaze", "bbq", "buffalo", "tajin", "chamoy", "vinegar",
+		"aioli", "hummus", "tzatziki", "sriracha", "hot sauce",
+	},
+}
+
+// categoryConstraints defines min/max selections for each category
+var categoryConstraints = map[string]struct {
+	min         int
+	max         int
+	displayName string
+	order       int
+}{
+	"base":    {min: 1, max: 1, displayName: "Choose Your Base", order: 0},
+	"protein": {min: 1, max: 2, displayName: "Choose Your Protein", order: 1},
+	"filling": {min: 0, max: 2, displayName: "Rice & Beans", order: 2},
+	"topping": {min: 0, max: 6, displayName: "Add Toppings", order: 3},
+	"sauce":   {min: 0, max: 2, displayName: "Sauces & Dressings", order: 4},
+	"extras":  {min: 0, max: 4, displayName: "Extras", order: 5},
+}
+
+// categorizeByIngredientName determines component category from its name
+// This is used as a fallback when HTML parsing doesn't yield categories
+func categorizeByIngredientName(name string) string {
+	nameLower := strings.ToLower(name)
+
+	// Check cheese separately - it's a topping but contains "cheese"
+	if strings.Contains(nameLower, "cheese") {
+		return "topping"
+	}
+
+	// Check each category's patterns
+	for category, patterns := range ingredientPatterns {
+		for _, pattern := range patterns {
+			if strings.Contains(nameLower, pattern) {
+				return category
+			}
+		}
+	}
+
+	// Default to extras for uncategorized items
+	return "extras"
+}
+
+// CategorizeComponentsByName applies name-based categorization to components
+// that still have the generic "component" category. Also sets proper constraints.
+func CategorizeComponentsByName(components []models.RecipeComponent, nameResolver func(recipeID string) string) []models.RecipeComponent {
+	if len(components) == 0 {
+		return components
+	}
+
+	result := make([]models.RecipeComponent, len(components))
+	copy(result, components)
+
+	// Categorize each component based on its name
+	for i := range result {
+		c := &result[i]
+		if c.Category == "component" || c.Category == "" {
+			// Get the component name from the resolver
+			name := ""
+			if nameResolver != nil {
+				name = nameResolver(c.ComponentRecipeID)
+			}
+
+			if name != "" {
+				c.Category = categorizeByIngredientName(name)
+			} else {
+				c.Category = "extras"
+			}
+		}
+
+		// Apply constraints based on category
+		if constraints, ok := categoryConstraints[c.Category]; ok {
+			c.MinSelections = constraints.min
+			c.MaxSelections = &constraints.max
+			c.CategoryDisplayName = constraints.displayName
+			c.CategoryOrder = constraints.order
+		}
+	}
+
+	return result
+}
+
+// ApplyCategoryConstraints sets min/max constraints on components based on their category
+func ApplyCategoryConstraints(components []models.RecipeComponent) []models.RecipeComponent {
+	result := make([]models.RecipeComponent, len(components))
+	copy(result, components)
+
+	for i := range result {
+		c := &result[i]
+		if constraints, ok := categoryConstraints[c.Category]; ok {
+			c.MinSelections = constraints.min
+			c.MaxSelections = &constraints.max
+			if c.CategoryDisplayName == "" || c.CategoryDisplayName == c.Category {
+				c.CategoryDisplayName = constraints.displayName
+			}
+			c.CategoryOrder = constraints.order
+		}
+	}
+
+	return result
 }
