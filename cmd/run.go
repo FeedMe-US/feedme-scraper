@@ -22,7 +22,7 @@ var (
 	cacheDir      string
 	rateLimit     float64
 	maxWorkers    int
-	days          int    // Number of days to scrape (1 = today only, 7 = week ahead)
+	days          int    // Number of days to scrape (1 = today only)
 	metricsOutput string // File path to write Prometheus metrics
 	pushMetrics   bool   // Push metrics to Grafana Cloud
 )
@@ -43,7 +43,7 @@ func init() {
 	rootCmd.AddCommand(runCmd)
 
 	runCmd.Flags().StringVar(&dateStr, "date", "", "Target date (YYYY-MM-DD), defaults to today")
-	runCmd.Flags().IntVar(&days, "days", 1, "Number of days to scrape (1 = today only, 7 = week ahead)")
+	runCmd.Flags().IntVar(&days, "days", 1, "Number of days to scrape (1 = today only)")
 	runCmd.Flags().StringVar(&location, "location", "", "Single location to scrape (for testing)")
 	runCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Parse only, skip database writes")
 	runCmd.Flags().StringVar(&cacheDir, "cache-dir", ".cache", "Cache directory")
