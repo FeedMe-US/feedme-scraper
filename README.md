@@ -11,7 +11,7 @@ go build -o feedme-scraper .
 # Run (requires env vars)
 export SUPABASE_URL=...
 export SUPABASE_SERVICE_KEY=...
-./feedme-scraper run --verbose --days 7
+./feedme-scraper run --verbose
 ```
 
 ## Commands
