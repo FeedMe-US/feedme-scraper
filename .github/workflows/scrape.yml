@@ -43,6 +43,13 @@ jobs:
           GRAFANA_METRICS_USER: ${{ secrets.GRAFANA_METRICS_USER }}
           GRAFANA_METRICS_API_KEY: ${{ secrets.GRAFANA_METRICS_API_KEY }}
         run: |
+          echo "=== SECRET DIAGNOSTICS ==="
+          echo "URL host: $(echo "$SUPABASE_URL" | sed 's|https://||' | cut -d'.' -f1)"
+          echo "URL length: ${#SUPABASE_URL}"
+          echo "Key length: ${#SUPABASE_SERVICE_KEY}"
+          echo "Key ref: $(echo "$SUPABASE_SERVICE_KEY" | cut -d'.' -f2 | base64 -d 2>/dev/null | grep -o '"ref":"[^"]*"' || echo "JWT decode failed")"
+          echo "Key role: $(echo "$SUPABASE_SERVICE_KEY" | cut -d'.' -f2 | base64 -d 2>/dev/null | grep -o '"role":"[^"]*"' || echo "JWT decode failed")"
+          echo "=== END DIAGNOSTICS ==="
           DAYS="${{ github.event.inputs.days || '7' }}"
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
             ./feedme-scraper run --dry-run --verbose --days "$DAYS"
