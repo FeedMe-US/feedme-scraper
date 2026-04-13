@@ -1,7 +1,11 @@
 package parse
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -9,6 +13,9 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"github.com/FeedMe-US/feedme-scraper/internal/models"
 )
+
+// nutritionCalcURL is UCLA's AJAX endpoint for computing composite item nutrition.
+const nutritionCalcURL = "https://dining.ucla.edu/wp-content/plugins/custom-short-code/nutrition_calc_ajax.php"
 
 // numericRegex extracts numeric values from strings like "3.7g" or "15"
 var numericRegex = regexp.MustCompile(`([\d.]+)`)
@@ -147,6 +154,136 @@ func ParseRecipe(html, recipeID string) (*models.Nutrition, error) {
 
 	// Extract ingredients text
 	nutrition.IngredientsText = extractIngredients(doc)
+
+	return nutrition, nil
+}
+
+// ParseRecipeWithHTTP parses a recipe detail page, handling both simple and composite formats.
+// Composite items (e.g. sandwiches, freestyle bowls) have no inline nutrition data; their
+// nutrition is fetched via UCLA's AJAX calculator using all listed components at qty 1.
+// If httpClient is nil, falls back to the standard HTML-only parse.
+func ParseRecipeWithHTTP(html, recipeID string, httpClient *http.Client) (*models.Nutrition, error) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		return nil, fmt.Errorf("parse html: %w", err)
+	}
+
+	if isCompositePage(doc) && httpClient != nil {
+		nutrition, err := parseCompositeNutrition(doc, httpClient, recipeID)
+		if err != nil {
+			slog.Warn("composite nutrition AJAX failed, falling back to HTML parse",
+				"recipe_id", recipeID, "error", err)
+		} else {
+			return nutrition, nil
+		}
+	}
+
+	// Standard HTML parse (simple items, or fallback when AJAX fails)
+	return ParseRecipe(html, recipeID)
+}
+
+// isCompositePage checks whether a recipe page uses the composite/build-your-own format
+// where nutrition is calculated from selected components via AJAX, not inline HTML.
+func isCompositePage(doc *goquery.Document) bool {
+	return doc.Find("div.single-complex-ingredients").Length() > 0
+}
+
+// compositeNutritionResp matches UCLA's nutrition_calc_ajax.php JSON response.
+type compositeNutritionResp struct {
+	Calories      json.Number `json:"calories"`
+	Protein       string      `json:"protein"`
+	Carbohydrates string      `json:"carbohydrates"`
+	Fat           string      `json:"fat"`
+	Fibre         string      `json:"fibre"` // British spelling in UCLA's API
+	Sugars        string      `json:"sugars"`
+	AddedSugars   string      `json:"added_sugars"`
+	Sodium        string      `json:"sodium"`
+	SaturatedFat  string      `json:"saturated_fat"`
+	TransFat      string      `json:"trans_fat"`
+	Cholesterol   string      `json:"cholesterol"`
+	Calcium       string      `json:"calcium"`
+	Iron          string      `json:"iron"`
+	Potassium     string      `json:"potassium"`
+	VitaminD      string      `json:"vitaminD"` // camelCase in UCLA's API
+}
+
+// parseCompositeNutrition fetches nutrition for a composite recipe page by calling
+// UCLA's AJAX endpoint with all listed components at quantity 1.
+func parseCompositeNutrition(doc *goquery.Document, httpClient *http.Client, recipeID string) (*models.Nutrition, error) {
+	// Extract component IDs from checkbox inputs on the page
+	var items []string
+	doc.Find("input.toggle_nutrition_value").Each(func(i int, sel *goquery.Selection) {
+		id, _ := sel.Attr("value")
+		ingredientType, _ := sel.Attr("ingredient_type")
+		if id != "" && ingredientType != "" {
+			items = append(items, fmt.Sprintf("%s,%s,1", id, ingredientType))
+		}
+	})
+
+	if len(items) == 0 {
+		return nil, fmt.Errorf("no components found on composite page")
+	}
+
+	// Call the AJAX endpoint with all components
+	reqURL := nutritionCalcURL + "?items=" + strings.Join(items, ";") + ";"
+
+	resp, err := httpClient.Get(reqURL)
+	if err != nil {
+		return nil, fmt.Errorf("AJAX request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("AJAX status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read AJAX response: %w", err)
+	}
+
+	var result compositeNutritionResp
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("decode AJAX response: %w", err)
+	}
+
+	// Build nutrition from AJAX response
+	nutrition := &models.Nutrition{
+		RecipeID: recipeID,
+		Name:     strings.TrimSpace(doc.Find("h2.single-name").First().Text()),
+	}
+
+	if cal, err := result.Calories.Float64(); err == nil && cal > 0 {
+		nutrition.Calories = &cal
+	}
+	nutrition.ProteinG = extractNumeric(result.Protein)
+	nutrition.CarbsG = extractNumeric(result.Carbohydrates)
+	nutrition.FatG = extractNumeric(result.Fat)
+	nutrition.FiberG = extractNumeric(result.Fibre)
+	nutrition.SugarG = extractNumeric(result.Sugars)
+	nutrition.AddedSugarsG = extractNumeric(result.AddedSugars)
+	nutrition.SodiumMG = extractNumeric(result.Sodium)
+	nutrition.SaturatedFatG = extractNumeric(result.SaturatedFat)
+	nutrition.TransFatG = extractNumeric(result.TransFat)
+	nutrition.CholesterolMG = extractNumeric(result.Cholesterol)
+	nutrition.CalciumMG = extractNumeric(result.Calcium)
+	nutrition.IronMG = extractNumeric(result.Iron)
+	nutrition.PotassiumMG = extractNumeric(result.Potassium)
+	nutrition.VitaminDMCG = extractNumeric(result.VitaminD)
+
+	// Allergens and ingredients come from the HTML, not the AJAX response
+	nutrition.Allergens = extractAllergens(doc)
+	nutrition.IngredientsText = extractIngredients(doc)
+
+	if nutrition.Calories == nil {
+		return nil, fmt.Errorf("AJAX returned zero or invalid calories for %d components", len(items))
+	}
+
+	slog.Info("composite recipe parsed via AJAX",
+		"recipe_id", recipeID,
+		"calories", *nutrition.Calories,
+		"components", len(items),
+	)
 
 	return nutrition, nil
 }

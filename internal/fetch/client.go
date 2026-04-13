@@ -160,6 +160,12 @@ func (c *Client) Get(ctx context.Context, url string) (string, bool, error) {
 	return bodyStr, false, nil
 }
 
+// HTTPClient returns the underlying *http.Client for use by callers
+// that need to make additional HTTP requests with the same timeout settings.
+func (c *Client) HTTPClient() *http.Client {
+	return c.httpClient
+}
+
 // Stats returns fetch statistics.
 func (c *Client) Stats() (total, hits, misses, errs int) {
 	c.mu.Lock()

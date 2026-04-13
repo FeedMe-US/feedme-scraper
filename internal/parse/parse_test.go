@@ -1,10 +1,14 @@
 package parse
 
 import (
+	"io"
+	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/FeedMe-US/feedme-scraper/internal/models"
 )
 
@@ -402,6 +406,10 @@ func TestIsBYOItem(t *testing.T) {
 		{"Craft Your Own Salad", true},
 		{"Create Your Own Bowl", true},
 		{"Make Your Own Taco", true},
+		{"Chinese Freestyle Bowl", true},
+		{"Indian Freestyle Bowl", true},
+		{"Japanese Freestyle Bowl", true},
+		{"Korean Freestyle Bowl", true},
 		{"Grilled Chicken Breast", false},
 		{"Steamed Rice", false},
 		{"Regular Burrito", false},
@@ -538,27 +546,204 @@ func TestCategorizeComponentsByName(t *testing.T) {
 	}
 }
 
-func TestParseBYOFromRendezvous(t *testing.T) {
-	html, err := os.ReadFile("c:/Users/jackw/Desktop/Lutz Consulting Group, LLC/clients/feedme/temp_rendezvous.html")
-	if err != nil {
-		t.Skip("temp_rendezvous.html not found, skipping test")
+func TestIsBYOItem_FreestyleBowls(t *testing.T) {
+	// Rendé serves Freestyle Bowls that should be classified as BYO items.
+	// These were previously missed because IsBYOItem only matched "Build-Your-Own" patterns.
+	freestyleBowls := []string{
+		"Chinese Freestyle Bowl",
+		"Indian Freestyle Bowl",
+		"Japanese Freestyle Bowl",
+		"Korean Freestyle Bowl",
 	}
 
-	items, err := ParseHallMenu(string(html), "Rendezvous", "2025-01-13")
-	if err != nil {
-		t.Fatalf("ParseHallMenu failed: %v", err)
-	}
-
-	t.Logf("Total items: %d", len(items))
-
-	// Find BYO items
-	var byoItems []string
-	for _, item := range items {
-		if IsBYOItem(item.Name) {
-			byoItems = append(byoItems, item.Name)
-			t.Logf("BYO: %s (recipe=%s, section=%s)", item.Name, item.RecipeID, item.Section)
+	for _, name := range freestyleBowls {
+		if !IsBYOItem(name) {
+			t.Errorf("IsBYOItem(%q) = false, want true", name)
 		}
 	}
 
-	t.Logf("Found %d BYO items", len(byoItems))
+	// Regular items should still not match
+	nonBYO := []string{
+		"California Steak Burrito",
+		"BBQ Chicken Quesadilla",
+		"Shrimp Tempura",
+	}
+	for _, name := range nonBYO {
+		if IsBYOItem(name) {
+			t.Errorf("IsBYOItem(%q) = true, want false", name)
+		}
+	}
+}
+
+func TestIsCompositePage(t *testing.T) {
+	compositeHTML := `<html><body>
+		<div class="single-complex-ingredients">
+			<input type="checkbox" value="251" class="toggle_nutrition_value" ingredient_type="subrecipe">
+		</div>
+	</body></html>`
+
+	simpleHTML := `<html><body>
+		<p class="single-calories"><span>Calories</span>187</p>
+	</body></html>`
+
+	tests := []struct {
+		name string
+		html string
+		want bool
+	}{
+		{"composite page", compositeHTML, true},
+		{"simple page", simpleHTML, false},
+		{"empty page", "<html><body></body></html>", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doc, err := goquery.NewDocumentFromReader(strings.NewReader(tt.html))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := isCompositePage(doc); got != tt.want {
+				t.Errorf("isCompositePage() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseRecipe_SimpleItem(t *testing.T) {
+	// Minimal simple recipe page HTML
+	html := `<html><body>
+		<h2 class="single-name">French Toast</h2>
+		<div id="nutrition">
+			<strong>Serving Size:</strong> 2.48oz<hr>
+		</div>
+		<p class="single-calories"><span>Calories</span>187</p>
+		<table class="nutritive-table">
+			<tr><td><span>Total Fat</span>5.36g</td><td>7%</td></tr>
+			<tr><td><span>Protein</span>6.2g</td><td></td></tr>
+			<tr><td><span>Total Carbohydrate</span>24.5g</td><td></td></tr>
+			<tr><td><span>Sodium</span>310mg</td><td></td></tr>
+		</table>
+	</body></html>`
+
+	nutrition, err := ParseRecipe(html, "1475")
+	if err != nil {
+		t.Fatalf("ParseRecipe failed: %v", err)
+	}
+
+	if nutrition.Name != "French Toast" {
+		t.Errorf("Name = %q, want %q", nutrition.Name, "French Toast")
+	}
+	if nutrition.Calories == nil || *nutrition.Calories != 187 {
+		t.Errorf("Calories = %v, want 187", nutrition.Calories)
+	}
+	if nutrition.ProteinG == nil || *nutrition.ProteinG != 6.2 {
+		t.Errorf("Protein = %v, want 6.2", nutrition.ProteinG)
+	}
+	if nutrition.ServingSize != "2.48oz" {
+		t.Errorf("ServingSize = %q, want %q", nutrition.ServingSize, "2.48oz")
+	}
+}
+
+// fetchRecipePage is a test helper that fetches a recipe page from UCLA dining.
+func fetchRecipePage(t *testing.T, recipeID string) string {
+	t.Helper()
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get("https://dining.ucla.edu/menu-item/?recipe=" + recipeID)
+	if err != nil {
+		t.Fatalf("Failed to fetch recipe %s: %v", recipeID, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to read body for recipe %s: %v", recipeID, err)
+	}
+	return string(body)
+}
+
+func TestParseRecipeWithHTTP_CompositeHamSwiss(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	html := fetchRecipePage(t, "404")
+
+	nutrition, err := ParseRecipeWithHTTP(html, "404", client)
+	if err != nil {
+		t.Fatalf("ParseRecipeWithHTTP failed: %v", err)
+	}
+
+	t.Logf("Name: %s", nutrition.Name)
+	if nutrition.Calories == nil {
+		t.Fatal("Calories is nil — composite AJAX parse failed")
+	}
+	t.Logf("Calories: %.0f", *nutrition.Calories)
+
+	if *nutrition.Calories < 100 {
+		t.Errorf("Calories = %.0f, expected > 100 for a sandwich", *nutrition.Calories)
+	}
+	if nutrition.ProteinG == nil || *nutrition.ProteinG <= 0 {
+		t.Errorf("Protein = %v, expected > 0", nutrition.ProteinG)
+	}
+	if nutrition.FatG == nil || *nutrition.FatG <= 0 {
+		t.Errorf("Fat = %v, expected > 0", nutrition.FatG)
+	}
+	if nutrition.CarbsG == nil || *nutrition.CarbsG <= 0 {
+		t.Errorf("Carbs = %v, expected > 0", nutrition.CarbsG)
+	}
+	if nutrition.SodiumMG == nil || *nutrition.SodiumMG <= 0 {
+		t.Errorf("Sodium = %v, expected > 0", nutrition.SodiumMG)
+	}
+}
+
+func TestParseRecipeWithHTTP_CompositeFreestyleBowl(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	html := fetchRecipePage(t, "5898") // Chinese Freestyle Bowl
+
+	nutrition, err := ParseRecipeWithHTTP(html, "5898", client)
+	if err != nil {
+		t.Fatalf("ParseRecipeWithHTTP failed: %v", err)
+	}
+
+	t.Logf("Name: %s", nutrition.Name)
+	if nutrition.Calories == nil {
+		t.Fatal("Calories is nil — composite AJAX parse failed")
+	}
+	t.Logf("Calories: %.0f", *nutrition.Calories)
+
+	if *nutrition.Calories < 200 {
+		t.Errorf("Calories = %.0f, expected > 200 for a freestyle bowl", *nutrition.Calories)
+	}
+}
+
+func TestParseRecipeWithHTTP_SimpleItemUnchanged(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	html := fetchRecipePage(t, "1475") // French Toast
+
+	nutrition, err := ParseRecipeWithHTTP(html, "1475", client)
+	if err != nil {
+		t.Fatalf("ParseRecipeWithHTTP failed: %v", err)
+	}
+
+	t.Logf("Name: %s", nutrition.Name)
+	if nutrition.Calories == nil {
+		t.Fatal("Calories is nil")
+	}
+	t.Logf("Calories: %.0f", *nutrition.Calories)
+
+	// French Toast should be ~187 calories. Allow some variance if UCLA updates.
+	if *nutrition.Calories < 100 || *nutrition.Calories > 400 {
+		t.Errorf("Calories = %.0f, expected 100-400 for French Toast", *nutrition.Calories)
+	}
+	if nutrition.ProteinG == nil || *nutrition.ProteinG <= 0 {
+		t.Errorf("Protein = %v, expected > 0", nutrition.ProteinG)
+	}
+	if nutrition.ServingSize == "" {
+		t.Error("ServingSize is empty for simple item")
+	}
 }
