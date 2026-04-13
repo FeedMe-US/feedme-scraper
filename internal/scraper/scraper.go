@@ -323,7 +323,7 @@ func (s *Scraper) fetchAllRecipes(ctx context.Context, recipeIDs []string) ([]mo
 				return
 			}
 
-			nutrition, err := parse.ParseRecipe(html, id)
+			nutrition, err := parse.ParseRecipeWithHTTP(html, id, s.client.HTTPClient())
 			if err != nil {
 				mu.Lock()
 				allErrors = append(allErrors, fmt.Sprintf("recipe %s parse: %v", id, err))

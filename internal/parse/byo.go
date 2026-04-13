@@ -15,6 +15,7 @@ var byoPatterns = []string{
 	"craft your own",
 	"create your own",
 	"make your own",
+	"freestyle bowl",
 }
 
 // Category mapping from UCLA's display names to normalized categories
